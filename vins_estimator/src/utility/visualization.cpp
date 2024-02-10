@@ -42,6 +42,14 @@ void registerPub(ros::NodeHandle &n)
     keyframebasevisual.setLineWidth(0.01);
 }
 
+/**
+ * @brief 发送最新的位姿结果
+ * 
+ * @param[in] P 
+ * @param[in] Q 
+ * @param[in] V 
+ * @param[in] header 
+ */
 void pubLatestOdometry(const Eigen::Vector3d &P, const Eigen::Quaterniond &Q, const Eigen::Vector3d &V, const std_msgs::Header &header)
 {
     Eigen::Quaterniond quadrotor_Q = Q ;
@@ -375,21 +383,24 @@ void pubKeyframe(const Estimator &estimator)
         for (auto &it_per_id : estimator.f_manager.feature)
         {
             int frame_size = it_per_id.feature_per_frame.size();
+            // 能被 WINDOW_SIZE - 2帧看到并且是有效的地图点
             if(it_per_id.start_frame < WINDOW_SIZE - 2 && it_per_id.start_frame + frame_size - 1 >= WINDOW_SIZE - 2 && it_per_id.solve_flag == 1)
             {
 
                 int imu_i = it_per_id.start_frame;
-                Vector3d pts_i = it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth;
+                Vector3d pts_i = it_per_id.feature_per_frame[0].point * it_per_id.estimated_depth;  // 相机坐标系下的坐标
+                // 转到世界坐标系
                 Vector3d w_pts_i = estimator.Rs[imu_i] * (estimator.ric[0] * pts_i + estimator.tic[0])
                                       + estimator.Ps[imu_i];
                 geometry_msgs::Point32 p;
                 p.x = w_pts_i(0);
                 p.y = w_pts_i(1);
                 p.z = w_pts_i(2);
-                point_cloud.points.push_back(p);
+                point_cloud.points.push_back(p);    // 世界坐标系的坐标
 
                 int imu_j = WINDOW_SIZE - 2 - it_per_id.start_frame;
                 sensor_msgs::ChannelFloat32 p_2d;
+                // 在该帧相机坐标系下的归一化坐标以及像素坐标
                 p_2d.values.push_back(it_per_id.feature_per_frame[imu_j].point.x());
                 p_2d.values.push_back(it_per_id.feature_per_frame[imu_j].point.y());
                 p_2d.values.push_back(it_per_id.feature_per_frame[imu_j].uv.x());
@@ -408,6 +419,7 @@ void pubRelocalization(const Estimator &estimator)
     nav_msgs::Odometry odometry;
     odometry.header.stamp = ros::Time(estimator.relo_frame_stamp);
     odometry.header.frame_id = "world";
+    // 优化后的回环帧位姿
     odometry.pose.pose.position.x = estimator.relo_relative_t.x();
     odometry.pose.pose.position.y = estimator.relo_relative_t.y();
     odometry.pose.pose.position.z = estimator.relo_relative_t.z();
@@ -415,7 +427,9 @@ void pubRelocalization(const Estimator &estimator)
     odometry.pose.pose.orientation.y = estimator.relo_relative_q.y();
     odometry.pose.pose.orientation.z = estimator.relo_relative_q.z();
     odometry.pose.pose.orientation.w = estimator.relo_relative_q.w();
+    // 回环帧的yaw
     odometry.twist.twist.linear.x = estimator.relo_relative_yaw;
+    // 回环帧对应的当前帧在回环节点中的idx
     odometry.twist.twist.linear.y = estimator.relo_frame_index;
 
     pub_relo_relative_pose.publish(odometry);

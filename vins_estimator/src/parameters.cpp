@@ -41,63 +41,68 @@ T readParam(ros::NodeHandle &n, std::string name)
 
 void readParameters(ros::NodeHandle &n)
 {
-    std::string config_file;
-    config_file = readParam<std::string>(n, "config_file");
-    cv::FileStorage fsSettings(config_file, cv::FileStorage::READ);
+    std::string config_file; // config文件路径
+    config_file = readParam<std::string>(n, "config_file"); // 从ros参数服务器中读取config_file参数
+    cv::FileStorage fsSettings(config_file, cv::FileStorage::READ); // 用opencv读取config文件yaml
     if(!fsSettings.isOpened())
     {
         std::cerr << "ERROR: Wrong path to settings" << std::endl;
     }
 
+    // 将config文件中的imu_topic参数读取到IMU_TOPIC中，可以直接在在config文件中修改
     fsSettings["imu_topic"] >> IMU_TOPIC;
 
-    SOLVER_TIME = fsSettings["max_solver_time"];
-    NUM_ITERATIONS = fsSettings["max_num_iterations"];
-    MIN_PARALLAX = fsSettings["keyframe_parallax"];
-    MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH;
+    SOLVER_TIME = fsSettings["max_solver_time"]; // 单词最大求解时间
+    NUM_ITERATIONS = fsSettings["max_num_iterations"]; // 单次优化最大迭代次数
+    MIN_PARALLAX = fsSettings["keyframe_parallax"]; // 关键帧视差
+    // VINS判断是否为关键帧的条件是同一个特征点在两个图像中的视差是否大于关键帧视察，大于就是关键帧
+    MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH; // 关键帧视察在虚拟相机下的表示
 
-    std::string OUTPUT_PATH;
+    std::string OUTPUT_PATH; // 输出路径
     fsSettings["output_path"] >> OUTPUT_PATH;
     VINS_RESULT_PATH = OUTPUT_PATH + "/vins_result_no_loop.csv";
     std::cout << "result path " << VINS_RESULT_PATH << std::endl;
 
-    // create folder if not exists
+    // create folder if not exists，如果输出路径不存在就创建
     FileSystemHelper::createDirectoryIfNotExists(OUTPUT_PATH.c_str());
-
+    // 利用ofstream在输出路径下创建一个空文件
     std::ofstream fout(VINS_RESULT_PATH, std::ios::out);
     fout.close();
 
-    ACC_N = fsSettings["acc_n"];
-    ACC_W = fsSettings["acc_w"];
-    GYR_N = fsSettings["gyr_n"];
-    GYR_W = fsSettings["gyr_w"];
-    G.z() = fsSettings["g_norm"];
-    ROW = fsSettings["image_height"];
-    COL = fsSettings["image_width"];
+    // imu和图像的各种参数
+    ACC_N = fsSettings["acc_n"]; // 静态加速度计噪声标准差
+    ACC_W = fsSettings["acc_w"]; // 静态加速度计随机游走噪声标准差
+    GYR_N = fsSettings["gyr_n"]; // 静态陀螺仪噪声标准差
+    GYR_W = fsSettings["gyr_w"]; // 静态陀螺仪随机游走噪声标准差
+    G.z() = fsSettings["g_norm"]; // 重力加速度
+    ROW = fsSettings["image_height"]; // 图像高度
+    COL = fsSettings["image_width"]; // 图像宽度
     ROS_INFO("ROW: %f COL: %f ", ROW, COL);
 
-    ESTIMATE_EXTRINSIC = fsSettings["estimate_extrinsic"];
-    if (ESTIMATE_EXTRINSIC == 2)
+    // 外参（旋转外参）
+    ESTIMATE_EXTRINSIC = fsSettings["estimate_extrinsic"]; // ！ 外参标志位，是否在线标定外参
+    if (ESTIMATE_EXTRINSIC == 2) // 2表示没有外参先验，需要初始化
     {
         ROS_WARN("have no prior about extrinsic param, calibrate extrinsic param");
-        RIC.push_back(Eigen::Matrix3d::Identity());
-        TIC.push_back(Eigen::Vector3d::Zero());
+        RIC.push_back(Eigen::Matrix3d::Identity()); // 单位矩阵最为初始值
+        TIC.push_back(Eigen::Vector3d::Zero()); // 零向量最为初始值
         EX_CALIB_RESULT_PATH = OUTPUT_PATH + "/extrinsic_parameter.csv";
 
     }
     else 
     {
-        if ( ESTIMATE_EXTRINSIC == 1)
+        if ( ESTIMATE_EXTRINSIC == 1) // 1表示有外参先验，需要优化
         {
             ROS_WARN(" Optimize extrinsic param around initial guess!");
             EX_CALIB_RESULT_PATH = OUTPUT_PATH + "/extrinsic_parameter.csv";
         }
-        if (ESTIMATE_EXTRINSIC == 0)
+        if (ESTIMATE_EXTRINSIC == 0) // 0表示固定外参，不需要优化
             ROS_WARN(" fix extrinsic param ");
 
         cv::Mat cv_R, cv_T;
-        fsSettings["extrinsicRotation"] >> cv_R;
-        fsSettings["extrinsicTranslation"] >> cv_T;
+        fsSettings["extrinsicRotation"] >> cv_R; // 旋转矩阵，从相机坐标系到IMU坐标系
+        fsSettings["extrinsicTranslation"] >> cv_T; // 平移向量，从相机坐标系到IMU坐标系
+        // VINS里面的参数都是eigen类型的，所以这里需要转换一下
         Eigen::Matrix3d eigen_R;
         Eigen::Vector3d eigen_T;
         cv::cv2eigen(cv_R, eigen_R);
@@ -111,10 +116,11 @@ void readParameters(ros::NodeHandle &n)
         
     } 
 
-    INIT_DEPTH = 5.0;
-    BIAS_ACC_THRESHOLD = 0.1;
-    BIAS_GYR_THRESHOLD = 0.1;
+    INIT_DEPTH = 5.0; // 特征点深度初始值
+    BIAS_ACC_THRESHOLD = 0.1; // 加速度计偏差阈值
+    BIAS_GYR_THRESHOLD = 0.1; // 陀螺仪偏差阈值
 
+    // 传感器的时间偏差
     TD = fsSettings["td"];
     ESTIMATE_TD = fsSettings["estimate_td"];
     if (ESTIMATE_TD)

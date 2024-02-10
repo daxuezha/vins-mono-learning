@@ -49,6 +49,7 @@ public:
 	void savePoseGraph();
 	void loadPoseGraph();
 	void publish();
+	//	VIO位姿和全局位姿的位姿差
 	Vector3d t_drift;
 	double yaw_drift;
 	Matrix3d r_drift;
@@ -96,6 +97,7 @@ T NormalizeAngle(const T& angle_degrees) {
   	return angle_degrees;
 };
 
+// 将增量叠加后的角度约束至（-180, 180）之间
 class AngleLocalParameterization {
  public:
 
@@ -156,12 +158,15 @@ void RotationMatrixRotatePoint(const T R[9], const T t[3], T r_t[3])
 	r_t[2] = R[6] * t[0] + R[7] * t[1] + R[8] * t[2];
 };
 
+// 使用ceres自动求导，只需要重载（）运算符，用来计算残差即可
 struct FourDOFError
 {
+	// 构造函数传入两帧之间的相对位姿差
 	FourDOFError(double t_x, double t_y, double t_z, double relative_yaw, double pitch_i, double roll_i)
 				  :t_x(t_x), t_y(t_y), t_z(t_z), relative_yaw(relative_yaw), pitch_i(pitch_i), roll_i(roll_i){}
 
 	template <typename T>
+	// 用来约束i帧的平移和yaw以及j帧的平移和yaw
 	bool operator()(const T* const yaw_i, const T* ti, const T* yaw_j, const T* tj, T* residuals) const
 	{
 		T t_w_ij[3];
@@ -171,14 +176,17 @@ struct FourDOFError
 
 		// euler to rotation
 		T w_R_i[9];
+		// 欧拉角转旋转矩阵 R_w_i
 		YawPitchRollToRotationMatrix(yaw_i[0], T(pitch_i), T(roll_i), w_R_i);
 		// rotation transpose
 		T i_R_w[9];
+		// R_w_i -> R_i_w
 		RotationMatrixTranspose(w_R_i, i_R_w);
 		// rotation matrix rotate point
 		T t_i_ij[3];
+		// R_i_w * (t_w_j - t_w_i) = t_i_ij世界坐标系下i->j的向量转到i系下
 		RotationMatrixRotatePoint(i_R_w, t_w_ij, t_i_ij);
-
+		// 得到位移和yaw角的残差
 		residuals[0] = (t_i_ij[0] - T(t_x));
 		residuals[1] = (t_i_ij[1] - T(t_y));
 		residuals[2] = (t_i_ij[2] - T(t_z));
@@ -228,7 +236,7 @@ struct FourDOFWeightError
 		residuals[0] = (t_i_ij[0] - T(t_x)) * T(weight);
 		residuals[1] = (t_i_ij[1] - T(t_y)) * T(weight);
 		residuals[2] = (t_i_ij[2] - T(t_z)) * T(weight);
-		residuals[3] = NormalizeAngle((yaw_j[0] - yaw_i[0] - T(relative_yaw))) * T(weight) / T(10.0);
+		residuals[3] = NormalizeAngle((yaw_j[0] - yaw_i[0] - T(relative_yaw))) * T(weight) / T(10.0); 	// 区别在于这里的权重
 
 		return true;
 	}

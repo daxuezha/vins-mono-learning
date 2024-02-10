@@ -11,17 +11,17 @@
 using namespace Eigen;
 using namespace std;
 
-
-
+// 一个进行sfm的特征
 struct SFMFeature
 {
-    bool state;
+    bool state;   // 是否已三角化
     int id;
-    vector<pair<int,Vector2d>> observation;
+    vector<pair<int,Vector2d>> observation;  // 存储该特征在不同帧下的坐标
     double position[3];
     double depth;
 };
 
+// ceres 的重投影误差
 struct ReprojectionError3D
 {
 	ReprojectionError3D(double observed_u, double observed_v)
@@ -32,10 +32,12 @@ struct ReprojectionError3D
 	bool operator()(const T* const camera_R, const T* const camera_T, const T* point, T* residuals) const
 	{
 		T p[3];
-		ceres::QuaternionRotatePoint(camera_R, point, p);
-		p[0] += camera_T[0]; p[1] += camera_T[1]; p[2] += camera_T[2];
+		ceres::QuaternionRotatePoint(camera_R, point, p);	// 旋转这个点
+		p[0] += camera_T[0]; p[1] += camera_T[1]; p[2] += camera_T[2];	// 这其实就是Rcw * pw + tcw
+		// 得到该相机坐标系下的3d坐标
 		T xp = p[0] / p[2];
-    	T yp = p[1] / p[2];
+    	T yp = p[1] / p[2];	// 归一化处理
+			// 跟现有观测形成残差
     	residuals[0] = xp - T(observed_u);
     	residuals[1] = yp - T(observed_v);
     	return true;

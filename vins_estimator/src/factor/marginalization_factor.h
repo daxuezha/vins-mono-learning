@@ -14,6 +14,7 @@ const int NUM_THREADS = 4;
 
 struct ResidualBlockInfo
 {
+    // 构造函数需要，cost function（约束），loss function：残差的计算方式，相关联的参数块，待边缘化的参数块的索引
     ResidualBlockInfo(ceres::CostFunction *_cost_function, ceres::LossFunction *_loss_function, std::vector<double *> _parameter_blocks, std::vector<int> _drop_set)
         : cost_function(_cost_function), loss_function(_loss_function), parameter_blocks(_parameter_blocks), drop_set(_drop_set) {}
 
@@ -56,10 +57,10 @@ class MarginalizationInfo
 
     std::vector<ResidualBlockInfo *> factors;
     int m, n;
-    std::unordered_map<long, int> parameter_block_size; //global size
+    std::unordered_map<long, int> parameter_block_size; //global size   // 地址->global size
     int sum_block_size;
-    std::unordered_map<long, int> parameter_block_idx; //local size
-    std::unordered_map<long, double *> parameter_block_data;
+    std::unordered_map<long, int> parameter_block_idx; //local size // 地址->参数排列的顺序idx
+    std::unordered_map<long, double *> parameter_block_data;    // 地址->参数块实际内容的地址
 
     std::vector<int> keep_block_size; //global size
     std::vector<int> keep_block_idx;  //local size
@@ -71,6 +72,7 @@ class MarginalizationInfo
 
 };
 
+// 由于边缘化的costfuntion不是固定大小的，因此只能继承最基本的类
 class MarginalizationFactor : public ceres::CostFunction
 {
   public:

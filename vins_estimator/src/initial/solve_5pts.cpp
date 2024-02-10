@@ -189,6 +189,15 @@ namespace cv {
     }
 }
 
+/**
+ * @brief 根据两帧匹配对求解R和带尺度的t
+ * 
+ * @param[in] corres 
+ * @param[in] Rotation 
+ * @param[in] Translation 
+ * @return true 
+ * @return false 
+ */
 
 bool MotionEstimator::solveRelativeRT(const vector<pair<Vector3d, Vector3d>> &corres, Matrix3d &Rotation, Vector3d &Translation)
 {
@@ -201,21 +210,26 @@ bool MotionEstimator::solveRelativeRT(const vector<pair<Vector3d, Vector3d>> &co
             rr.push_back(cv::Point2f(corres[i].second(0), corres[i].second(1)));
         }
         cv::Mat mask;
+        // 调用opencv接口求解E矩阵
         cv::Mat E = cv::findFundamentalMat(ll, rr, cv::FM_RANSAC, 0.3 / 460, 0.99, mask);
+        // 已经是归一化相机坐标系了，因此内参阵用单位阵
         cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1);
         cv::Mat rot, trans;
+        // 用opencv接口恢复R和t
         int inlier_cnt = cv::recoverPose(E, ll, rr, cameraMatrix, rot, trans, mask);
         //cout << "inlier_cnt " << inlier_cnt << endl;
 
         Eigen::Matrix3d R;
         Eigen::Vector3d T;
+        // cv -> eigen
         for (int i = 0; i < 3; i++)
         {   
             T(i) = trans.at<double>(i, 0);
             for (int j = 0; j < 3; j++)
                 R(i, j) = rot.at<double>(i, j);
         }
-
+        // > opencv得到的是T21,这里换成T12
+        // > 手动计算的反转变换
         Rotation = R.transpose();
         Translation = -R.transpose() * T;
         if(inlier_cnt > 12)

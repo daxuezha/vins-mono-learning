@@ -10,7 +10,7 @@ bool inBorder(const cv::Point2f &pt)
     return BORDER_SIZE <= img_x && img_x < COL - BORDER_SIZE && BORDER_SIZE <= img_y && img_y < ROW - BORDER_SIZE;
 }
 
-// 根据状态位，进行“瘦身”，通过双指针的方式，算法复杂度O(n)，空间复杂度O(1)
+// > 双指针，根据状态位，进行“瘦身”，通过双指针的方式，算法复杂度O(n)，空间复杂度O(1)
 void reduceVector(vector<cv::Point2f> &v, vector<uchar> status)
 {
     int j = 0;
@@ -50,6 +50,7 @@ void FeatureTracker::setMask()
     for (unsigned int i = 0; i < forw_pts.size(); i++)
         cnt_pts_id.push_back(make_pair(track_cnt[i], make_pair(forw_pts[i], ids[i])));
     // 利用光流特点，追踪多的稳定性好，排前面；也就是说，特征点被追踪次数越多，越不容易被剔除，越应该保留，所以排在前面
+    // > 排序函数一定不能声明在类内，因为std无法访问类内函数，一是像这样可以，二是声明为全局函数
     sort(cnt_pts_id.begin(), cnt_pts_id.end(), [](const pair<int, pair<cv::Point2f, int>> &a, const pair<int, pair<cv::Point2f, int>> &b)
          {
             return a.first > b.first;
@@ -72,7 +73,8 @@ void FeatureTracker::setMask()
             // opencv函数，把周围一个圆内全部置0,这个区域不允许别的特征点存在，避免特征点过于集中
             // 实际上就是将原先的mask进行了按照拍好序列的特征点坐标进行了稀疏化，除了255以外周围的mask全是0，这样就可以保证特征点的均匀化
             cv::circle(mask, it.second.first, MIN_DIST, 0, -1);
-            // 画圆函数，参数：图像，圆心，半径，颜色（灰度值），线宽（-1表示填充整个圆形）
+            // 画圆函数，参数：图像，圆心，半径，颜色（灰度值），线宽（-1表示填充整个圆形
+            // > orb2中是使用四叉树来实现特征均匀分配，虽然这样更规格，但是远没有vins的该方法快，毕竟vins特征跟踪数量远高于orb2的orb特征提取数量
         }
     }
 }
@@ -136,6 +138,8 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         vector<float> err;
         // 调用opencv函数进行光流追踪
         // Step 1 通过opencv光流追踪给的状态位剔除outlier
+        // > vins图像金字塔提高了光流追踪的鲁棒性，低分辨率做为高分辨率的追踪初值，防止直接高分辨率追踪导致的局部最优问题
+        // > orb2图像金字塔是为了多尺度提取特征的鲁棒性
         cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3);
         // 参数设置：前一帧图像，当前帧图像，前一帧特征点，当前帧特征点，状态位（关联坐标点），误差，窗口大小，金字塔层数是4
 
@@ -145,7 +149,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
             if (status[i] && !inBorder(forw_pts[i]))    // 追踪状态好检查在不在图像范围
                 status[i] = 0;
         // 状态位瘦身减少空间使用。通过状态位，将追踪到的特征点各种参数移动到各种参数容器的最前面，剩下的就是被剔除的
-        reduceVector(prev_pts, status); // 没用到
+        reduceVector(prev_pts, status); // ！ 没用到
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
         reduceVector(ids, status);  // 特征点的id
@@ -193,7 +197,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
 
         ROS_DEBUG("add feature begins");
         TicToc t_a;
-        addPoints(); // 把新的特征点加入容器
+        addPoints(); // 把新的特征点n_pts加入容器
         ROS_DEBUG("selectFeature costs: %fms", t_a.toc());
     }
     // 图像状态量更新
@@ -227,7 +231,8 @@ void FeatureTracker::rejectWithF()
             // 这里用一个虚拟相机，原因同样参考https://github.com/HKUST-Aerial-Robotics/VINS-Mono/issues/48
             // 虽然性能会有一定程度的下降，但是这里有个好处就是对F_THRESHOLD和相机无关，也就是说不同的相机都可以用
             // 而且这里的F_THRESHOLD是直接变成了一个相对值，和原始图像的相机参数无关从而实现了效率和通用性的平衡
-            // 投影到虚拟相机的像素坐标系，虚拟相机的焦距是写死的
+            // ! 投影到虚拟相机的像素坐标系，虚拟相机的参数是写死的，从而适配所有相机类型，肯定不如用真实的参数更精确，但这里只是通过对极约束来去除outliers而已
+            // > 归一化同时转入像素坐标系，后面加COL / 2.0和ROW / 2.0是因为像素坐标系原点在图像顶角上
             tmp_p.x() = FOCAL_LENGTH * tmp_p.x() / tmp_p.z() + COL / 2.0;
             tmp_p.y() = FOCAL_LENGTH * tmp_p.y() / tmp_p.z() + ROW / 2.0;
             un_cur_pts[i] = cv::Point2f(tmp_p.x(), tmp_p.y()); // 这里是上一帧的特征点
@@ -330,6 +335,7 @@ void FeatureTracker::undistortedPoints()
         // 有的之前去过畸变了，这里连同新的点一起去畸变，因为没法区分
         Eigen::Vector2d a(cur_pts[i].x, cur_pts[i].y);
         Eigen::Vector3d b;
+        // > 同样使用这个接口，在camera_model中liftProjective的参数已经设置好了
         m_camera->liftProjective(a, b);
         cur_un_pts.push_back(cv::Point2f(b.x() / b.z(), b.y() / b.z())); // 再次归一化
         // id->坐标的map

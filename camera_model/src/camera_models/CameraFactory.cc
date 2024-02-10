@@ -86,8 +86,15 @@ CameraFactory::generateCamera(Camera::ModelType modelType,
     }
 }
 
-CameraPtr // 这个是个相机模型共享指针
-// 从yaml文件中读取相机类型参数，选择对应的相机模型，然后读取相机参数
+/**
+ * @brief 
+ * 
+ * @param[in] filename 
+ * @return CameraPtr 
+ * 这里根据配置文件得到相机参数，我们只考虑针孔相机，得到畸变和内参，同时返回带有参数信息的类CameraPtr
+ */
+
+CameraPtr
 CameraFactory::generateCameraFromYamlFile(const std::string& filename)
 {
     cv::FileStorage fs(filename, cv::FileStorage::READ);
@@ -98,6 +105,7 @@ CameraFactory::generateCameraFromYamlFile(const std::string& filename)
     }
 
     Camera::ModelType modelType = Camera::MEI;
+    // 通过配置文件获取相机的模型
     if (!fs["model_type"].isNone())
     {
         std::string sModelType;
@@ -105,19 +113,19 @@ CameraFactory::generateCameraFromYamlFile(const std::string& filename)
 
         if (boost::iequals(sModelType, "kannala_brandt"))
         {
-            modelType = Camera::KANNALA_BRANDT; // 通用鱼眼相机模型
+            modelType = Camera::KANNALA_BRANDT;
         }
         else if (boost::iequals(sModelType, "mei"))
         {
-            modelType = Camera::MEI; // MEI鱼眼相机模型
+            modelType = Camera::MEI;
         }
         else if (boost::iequals(sModelType, "scaramuzza"))
         {
-            modelType = Camera::SCARAMUZZA; // 全向相机模型
+            modelType = Camera::SCARAMUZZA;
         }
         else if (boost::iequals(sModelType, "pinhole"))
         {
-            modelType = Camera::PINHOLE; // 针孔相机模型，最常见的相机模型
+            modelType = Camera::PINHOLE;
         }
         else
         {
@@ -126,7 +134,6 @@ CameraFactory::generateCameraFromYamlFile(const std::string& filename)
         }
     }
 
-    // 下面是根据相机类型选择对应的相机模型，并且读取相机参数，这一步相当于设置了相机参数为去畸变打下基础
     switch (modelType)
     {
     case Camera::KANNALA_BRANDT:

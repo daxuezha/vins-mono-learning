@@ -81,7 +81,7 @@ public:
 	Eigen::Matrix3d vio_R_w_i; 
 	Eigen::Vector3d T_w_i;
 	Eigen::Matrix3d R_w_i;
-	Eigen::Vector3d origin_vio_T;		
+	Eigen::Vector3d origin_vio_T;		// 原始VIO结果的位姿
 	Eigen::Matrix3d origin_vio_R;
 	cv::Mat image;
 	cv::Mat thumbnail;
@@ -89,11 +89,11 @@ public:
 	vector<cv::Point2f> point_2d_uv;
 	vector<cv::Point2f> point_2d_norm;
 	vector<double> point_id;
-	vector<cv::KeyPoint> keypoints;
-	vector<cv::KeyPoint> keypoints_norm;
+	vector<cv::KeyPoint> keypoints;	// fast角点的像素坐标
+	vector<cv::KeyPoint> keypoints_norm;	// fast角点对应的归一化相机系坐标
 	vector<cv::KeyPoint> window_keypoints;
-	vector<BRIEF::bitset> brief_descriptors;
-	vector<BRIEF::bitset> window_brief_descriptors;
+	vector<BRIEF::bitset> brief_descriptors;	// 额外提取的fast特征点的描述子
+	vector<BRIEF::bitset> window_brief_descriptors;	// 原来光流追踪的特征点的描述子
 	bool has_fast_point;
 	int sequence;
 

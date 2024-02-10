@@ -1,5 +1,11 @@
 #include "initial_alignment.h"
 
+/**
+ * @brief 利用滑窗内图像求解陀螺仪零偏，同时用求出来的零偏重新进行预积分
+ * 
+ * @param[in] all_image_frame 
+ * @param[in] Bgs 
+ */
 void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
 {
     Matrix3d A;
@@ -25,10 +31,10 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
     }
     delta_bg = A.ldlt().solve(b);
     ROS_WARN_STREAM("gyroscope bias initial calibration " << delta_bg.transpose());
-
+    // 滑窗中的零偏设置为求解出来的零偏
     for (int i = 0; i <= WINDOW_SIZE; i++)
         Bgs[i] += delta_bg;
-
+    // 对all_image_frame中预积分量根据当前零偏重新积分
     for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end( ); frame_i++)
     {
         frame_j = next(frame_i);
@@ -52,8 +58,16 @@ MatrixXd TangentBasis(Vector3d &g0)
     return bc;
 }
 
+/**
+ * @brief 得到了一个初始的重力向量，引入重力大小作为先验，再进行几次迭代优化，求解最终的变量
+ * 
+ * @param[in] all_image_frame 
+ * @param[in] g 
+ * @param[in] x 
+ */
 void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
+    // 参考论文
     Vector3d g0 = g.normalized() * G.norm();
     Vector3d lx, ly;
     //VectorXd x;
@@ -122,8 +136,18 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
     g = g0;
 }
 
+/**
+ * @brief 求解各帧的速度，枢纽帧的重力方向，以及尺度
+ * 
+ * @param[in] all_image_frame 
+ * @param[in] g 
+ * @param[in] x 
+ * @return true 
+ * @return false 
+ */
 bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
+    // 这一部分内容对照论文进行理解
     int all_frame_count = all_image_frame.size();
     int n_state = all_frame_count * 3 + 3 + 1;
 
@@ -174,6 +198,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
         A.block<6, 4>(i * 3, n_state - 4) += r_A.topRightCorner<6, 4>();
         A.block<4, 6>(n_state - 4, i * 3) += r_A.bottomLeftCorner<4, 6>();
     }
+    // 增强数值稳定性
     A = A * 1000.0;
     b = b * 1000.0;
     x = A.ldlt().solve(b);
@@ -181,12 +206,14 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     ROS_DEBUG("estimated scale: %f", s);
     g = x.segment<3>(n_state - 4);
     ROS_DEBUG_STREAM(" result g     " << g.norm() << " " << g.transpose());
+    // 做一些检查
     if(fabs(g.norm() - G.norm()) > 1.0 || s < 0)
     {
         return false;
     }
-
+    // 重力修复
     RefineGravity(all_image_frame, g, x);
+    // 得到真实尺度
     s = (x.tail<1>())(0) / 100.0;
     (x.tail<1>())(0) = s;
     ROS_DEBUG_STREAM(" refine     " << g.norm() << " " << g.transpose());
@@ -195,6 +222,17 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     else
         return true;
 }
+
+/**
+ * @brief 
+ * 
+ * @param[in] all_image_frame 每帧的位姿和对应的预积分量
+ * @param[out] Bgs 陀螺仪零偏
+ * @param[out] g 重力向量
+ * @param[out] x 其他状态量
+ * @return true 
+ * @return false 
+ */
 
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x)
 {

@@ -166,13 +166,13 @@ PinholeCamera::Parameters::readFromYamlFile(const std::string& filename)
     fs["camera_name"] >> m_cameraName;
     m_imageWidth = static_cast<int>(fs["image_width"]);
     m_imageHeight = static_cast<int>(fs["image_height"]);
-
+    // 获得相机的畸变参数
     cv::FileNode n = fs["distortion_parameters"];
     m_k1 = static_cast<double>(n["k1"]);
     m_k2 = static_cast<double>(n["k2"]);
     m_p1 = static_cast<double>(n["p1"]);
     m_p2 = static_cast<double>(n["p2"]);
-
+    // 相机的内参矩阵
     n = fs["projection_parameters"];
     m_fx = static_cast<double>(n["fx"]);
     m_fy = static_cast<double>(n["fy"]);
@@ -453,13 +453,12 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
     double rho2_d, rho4_d, radDist_d, Dx_d, Dy_d, inv_denom_d;
     //double lambda;
 
-    // Lift points to normalised plane，这里的K是内参矩阵，
-    // m_inv_K**都是K矩阵的各种元素的倒数，这里的p是像素坐标系下的坐标
-    // 因此下面获取的mx_d,my_d是归一化相机坐标系下的坐标，也就是笔记中的A'点
+    // Lift points to normalised plane
+    // 投影到归一化相机坐标系
     mx_d = m_inv_K11 * p(0) + m_inv_K13;
     my_d = m_inv_K22 * p(1) + m_inv_K23;
 
-    if (m_noDistortion) // 是不是有畸变，一般都是有畸变的
+    if (m_noDistortion)
     {
         mx_u = mx_d;
         my_u = my_d;
@@ -467,7 +466,6 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
     else
     {
         if (0)
-        // if中的语句是Heikkila博士教授在1997年提出的逆畸变模型，这个模型是一个多项式模型
         {
             double k1 = mParameters.k1();
             double k2 = mParameters.k2();
@@ -490,12 +488,14 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
             my_u = my_d - inv_denom_d*Dy_d;
         }
         else
+        // 参考https://github.com/HKUST-Aerial-Robotics/VINS-Mono/issues/48
         {
             // Recursive distortion model
-            int n = 8; // 迭代次数，这个是个可变参数，可以根据实际情况调整
-            Eigen::Vector2d d_u; // d_u就是PPT以及笔记中提到的从A'到A的变换量
+            int n = 8;
+            Eigen::Vector2d d_u;
+            // 这里mx_d + du = 畸变后
             distortion(Eigen::Vector2d(mx_d, my_d), d_u);
-            // Approximate value，得到最终的畸变坐标。因为畸变公式得到的是d_u是p_d - p_u，所以这里是减去d_u
+            // Approximate value
             mx_u = mx_d - d_u(0);
             my_u = my_d - d_u(1);
 
@@ -647,7 +647,6 @@ PinholeCamera::undistToPlane(const Eigen::Vector2d& p_u, Eigen::Vector2d& p) con
  */
 void
 PinholeCamera::distortion(const Eigen::Vector2d& p_u, Eigen::Vector2d& d_u) const
-// 畸变参数只有k1,k2,p1,p2，没有k3,k4,p3,p4
 {
     double k1 = mParameters.k1();
     double k2 = mParameters.k2();
@@ -656,11 +655,11 @@ PinholeCamera::distortion(const Eigen::Vector2d& p_u, Eigen::Vector2d& d_u) cons
 
     double mx2_u, my2_u, mxy_u, rho2_u, rad_dist_u;
 
-    mx2_u = p_u(0) * p_u(0); // 畸变公式中的x^2
-    my2_u = p_u(1) * p_u(1); // 畸变公式中的y^2
-    mxy_u = p_u(0) * p_u(1); // 畸变公式中的xy
-    rho2_u = mx2_u + my2_u; // 畸变公式中的r^2
-    rad_dist_u = k1 * rho2_u + k2 * rho2_u * rho2_u; // 畸变公式第一项（求得是d_u，因此没有系数1）
+    mx2_u = p_u(0) * p_u(0);
+    my2_u = p_u(1) * p_u(1);
+    mxy_u = p_u(0) * p_u(1);
+    rho2_u = mx2_u + my2_u;
+    rad_dist_u = k1 * rho2_u + k2 * rho2_u * rho2_u;
     d_u << p_u(0) * rad_dist_u + 2.0 * p1 * mxy_u + p2 * (rho2_u + 2.0 * mx2_u),
            p_u(1) * rad_dist_u + 2.0 * p2 * mxy_u + p1 * (rho2_u + 2.0 * my2_u);
 }
@@ -808,12 +807,11 @@ PinholeCamera::getParameters(void) const
     return mParameters;
 }
 
-// TODO: 相机参数设置，赋值给mParameters对象中的相机内参
 void
 PinholeCamera::setParameters(const PinholeCamera::Parameters& parameters)
 {
     mParameters = parameters;
-
+    // 检查图片是否去过畸变
     if ((mParameters.k1() == 0.0) &&
         (mParameters.k2() == 0.0) &&
         (mParameters.p1() == 0.0) &&
