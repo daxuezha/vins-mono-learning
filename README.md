@@ -1,3 +1,4 @@
+## vins_mono_noted for learning
 这是VINS-Mono开源代码的注释版本，方便大家学习这款非常优秀的VIO框架，原git库地址https://github.com/HKUST-Aerial-Robotics/VINS-Mono
 
 承接另外一个和视觉life课程结合的注释版本：https://github.com/mfkiwl/vins_mono_noted
@@ -168,4 +169,3 @@ We are still working on improving the code reliability. For any technical issues
 
 For commercial inquiries, please contact Shaojie SHEN <eeshaojieATust.hk>
 vins_mono_application
-# vins_mono_noted
