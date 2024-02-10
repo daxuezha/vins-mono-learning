@@ -14,14 +14,15 @@ void Estimator::setParameter()
 {
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
-        tic[i] = TIC[i];
-        ric[i] = RIC[i];
+        tic[i] = TIC[i]; // 平移外参
+        ric[i] = RIC[i]; // 旋转外参
     }
-    f_manager.setRic(ric);
-    // 这里可以看到虚拟相机的用法，1.5个像素误差
+    f_manager.setRic(ric); // 设置特征管理器的旋转外参，平移外参不需要
+    
+    // 这里可以看到虚拟相机的用法，设定重投影误差的置信度，也就是1.5个像素误差
     ProjectionFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionTdFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
-    td = TD;
+    td = TD; // 传感器时间同步赋值
 }
 
 // 所有状态全部重置
@@ -96,7 +97,7 @@ void Estimator::clearState()
  */
 void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
-    if (!first_imu)
+    if (!first_imu) // 第一帧imu数据如果是第一次进来，就设定为初始值
     {
         first_imu = true;
         acc_0 = linear_acceleration;
@@ -105,7 +106,8 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     
     // 滑窗中保留11帧，frame_count表示现在处理第几帧，一般处理到第11帧时就保持不变了
     // 由于预积分是帧间约束，因此第1个预积分量实际上是用不到的
-    if (!pre_integrations[frame_count])
+    // 如果当前帧预积分量为空，那么就创建一个预积分量对象
+    if (!pre_integrations[frame_count]) // pre_integrations是一个指针数组，保存划窗数据的位置坐标
     {
         pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     }
@@ -115,7 +117,7 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
         //if(solver_flag != NON_LINEAR)
 
-            // !  这个量用来做初始化用的
+            // ! 这个量用来做初始化用的
             tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
 
         // 保存传感器数据
@@ -123,7 +125,7 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
         angular_velocity_buf[frame_count].push_back(angular_velocity);
 		
-        // ! 又是一个中值积分，更新滑窗中状态量，本质是给非线性优化提供可信的初始值
+        // ! 又是一个中值积分，更新滑窗中状态量，本质是给非线性优化提供可信的初始值，所以直接在buffer上操作
         int j = frame_count;         
         Vector3d un_acc_0 = Rs[j] * (acc_0 - Bas[j]) - g;
         Vector3d un_gyr = 0.5 * (gyr_0 + angular_velocity) - Bgs[j];

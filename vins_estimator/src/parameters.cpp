@@ -49,7 +49,7 @@ void readParameters(ros::NodeHandle &n)
         std::cerr << "ERROR: Wrong path to settings" << std::endl;
     }
 
-    // 将config文件中的imu_topic参数读取到IMU_TOPIC中，可以直接在在config文件中修改
+    // 将config文件中的imu_topic参数，也就是IMU数据（测量值）读取到IMU_TOPIC中，可以直接在在config文件中修改
     fsSettings["imu_topic"] >> IMU_TOPIC;
 
     SOLVER_TIME = fsSettings["max_solver_time"]; // 单词最大求解时间
