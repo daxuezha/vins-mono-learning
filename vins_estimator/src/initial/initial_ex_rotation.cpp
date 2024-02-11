@@ -1,4 +1,5 @@
 #include "initial_ex_rotation.h"
+/* 外参标定和计算用函数库 */
 
 InitialEXRotation::InitialEXRotation(){
     frame_count = 0;
@@ -19,7 +20,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
     // 通过外参把imu的旋转转移到相机坐标系
     Rc_g.push_back(ric.inverse() * delta_q_imu * ric);  // ric是上一次求解得到的外参
 
-    // 构建了一个超定方程，一起求旋转外参
+    // 构建了一个超定方程，一起求旋转外参，该方程是N*4的A矩阵和4*1的x向量，通过svd求解得到x
     Eigen::MatrixXd A(frame_count * 4, 4);
     A.setZero();
     int sum_ok = 0;
@@ -28,14 +29,15 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         Quaterniond r1(Rc[i]);
         Quaterniond r2(Rc_g[i]);
 
-        double angular_distance = 180 / M_PI * r1.angularDistance(r2);
+        double angular_distance = 180 / M_PI * r1.angularDistance(r2); // 角度差
         ROS_DEBUG(
             "%d %f", i, angular_distance);
         // 一个简单的核函数
         double huber = angular_distance > 5.0 ? 5.0 / angular_distance : 1.0;
         ++sum_ok;
+        // 构造L和R矩阵，也就是笔记中齐次方程的左右相减的四元数矩阵的形式
         Matrix4d L, R;
-
+        // 这里的四元数矩阵和笔记中前面的章节不一样，是虚部在前，实部在后，这个公式补充到本章笔记中
         double w = Quaterniond(Rc[i]).w();
         Vector3d q = Quaterniond(Rc[i]).vec();
         L.block<3, 3>(0, 0) = w * Matrix3d::Identity() + Utility::skewSymmetric(q);
@@ -50,19 +52,20 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         R.block<3, 1>(0, 3) = q;
         R.block<1, 3>(3, 0) = -q.transpose();
         R(3, 3) = w;
-
+        // 公式左右相减顺序无所谓，huber核函数是为了减小离群点的影响构造一个小权重
         A.block<4, 4>((i - 1) * 4, 0) = huber * (L - R);    // 作用在残差上面
     }
 
     JacobiSVD<MatrixXd> svd(A, ComputeFullU | ComputeFullV);
     Matrix<double, 4, 1> x = svd.matrixV().col(3);
-    Quaterniond estimated_R(x);
-    ric = estimated_R.toRotationMatrix().inverse();
+    Quaterniond estimated_R(x); // 最终解出来的四元数是从IMU到相机坐标系的旋转
+    ric = estimated_R.toRotationMatrix().inverse(); // 我们想要的是从相机到IMU的旋转，因此需要取逆
     //cout << svd.singularValues().transpose() << endl;
     //cout << ric << endl;
     Vector3d ric_cov;
     ric_cov = svd.singularValues().tail<3>();
     // > 倒数第二个奇异值，因为旋转是3个自由度，因此检查一下第三小的奇异值是否足够大，通常需要足够的运动激励才能保证得到没有奇异的解
+    // ! 这部分的解释在从零开始手写VIO中的第6讲中有详细介绍
     if (frame_count >= WINDOW_SIZE && ric_cov(1) > 0.25)
     {
         calib_ric_result = ric;
@@ -75,7 +78,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
 // 对极约束求解E
 Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>> &corres)
 {
-    if (corres.size() >= 9)
+    if (corres.size() >= 9) // 要求至少9个点对计算对极约束
     {
         vector<cv::Point2f> ll, rr;
         for (int i = 0; i < int(corres.size()); i++)
@@ -83,10 +86,10 @@ Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>
             ll.push_back(cv::Point2f(corres[i].first(0), corres[i].first(1)));
             rr.push_back(cv::Point2f(corres[i].second(0), corres[i].second(1)));
         }
-        // 这里用的是相机坐标系，因此这个函数得到的也就是E矩阵
+        // 这里用的是相机坐标系，因此这个函数得到的也就是E矩阵，本质矩阵
         cv::Mat E = cv::findFundamentalMat(ll, rr);
         cv::Mat_<double> R1, R2, t1, t2;
-        decomposeE(E, R1, R2, t1, t2);
+        decomposeE(E, R1, R2, t1, t2); // 分解E矩阵，多视角几何有详细介绍
 
         // 旋转矩阵的行列式应该是1,这里如果是-1就取一下反
         if (determinant(R1) + 1.0 < 1e-09)
@@ -95,7 +98,7 @@ Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>
             decomposeE(E, R1, R2, t1, t2);
         }
 
-        // test 4 result after decomposeE() by Triangulation
+        // test 4 result after decomposeE() by Triangulation，slam十四讲有介绍
         double ratio1 = max(testTriangulation(ll, rr, R1, t1), testTriangulation(ll, rr, R1, t2));
         double ratio2 = max(testTriangulation(ll, rr, R2, t1), testTriangulation(ll, rr, R2, t2));
         cv::Mat_<double> ans_R_cv = ratio1 > ratio2 ? R1 : R2;
@@ -128,12 +131,12 @@ double InitialEXRotation::testTriangulation(const vector<cv::Point2f> &l,
     cv::Matx34f P = cv::Matx34f(1, 0, 0, 0,
                                 0, 1, 0, 0,
                                 0, 0, 1, 0);
-    // 第二帧就设置为R t对应的位姿
+    // 第二帧就设置为R t对应的位姿，增广矩阵的形式
     cv::Matx34f P1 = cv::Matx34f(R(0, 0), R(0, 1), R(0, 2), t(0),
                                  R(1, 0), R(1, 1), R(1, 2), t(1),
                                  R(2, 0), R(2, 1), R(2, 2), t(2));
     // 看一下opencv的定义
-    cv::triangulatePoints(P, P1, l, r, pointcloud);
+    cv::triangulatePoints(P, P1, l, r, pointcloud); // 三角化求解得到的3d点世界坐标
     int front_count = 0;
     for (int i = 0; i < pointcloud.cols; i++)
     {
@@ -143,12 +146,12 @@ double InitialEXRotation::testTriangulation(const vector<cv::Point2f> &l,
         // 得到在各自相机坐标系下的3d坐标
         cv::Mat_<double> p_3d_l = cv::Mat(P) * (pointcloud.col(i) / normal_factor);
         cv::Mat_<double> p_3d_r = cv::Mat(P1) * (pointcloud.col(i) / normal_factor);
-        // > 通过深度是否大于0来判断是否合理
+        // > 两帧坐标系下的通过深度是否大于0来判断是否合理
         if (p_3d_l(2) > 0 && p_3d_r(2) > 0)
             front_count++;
     }
     ROS_DEBUG("MotionEstimator: %f", 1.0 * front_count / pointcloud.cols);
-    return 1.0 * front_count / pointcloud.cols;
+    return 1.0 * front_count / pointcloud.cols; // 返回前方的点的比例
 }
 
 // 具体解法参考多视角几何

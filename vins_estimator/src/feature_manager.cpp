@@ -48,10 +48,10 @@ int FeatureManager::getFeatureCount()
 
 /**
  * @brief 增加特征点信息，同时通过视差检查上一帧是否时关键帧
- * 
- * @param[in] frame_count 
- * @param[in] image 
- * @param[in] td 
+ *        判断的原理是保证共视点足够的同时又不要过于太多，同时视差也要足够大，否则滑窗优化距离太小同时优化的点太多效率太低
+ * @param[in] frame_count 滑窗中的帧数，也是当前帧的滑窗序列
+ * @param[in] image 图像信息
+ * @param[in] td 时间差
  * @return true 
  * @return false 
  */
@@ -79,8 +79,8 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         if (it == feature.end())
         {
             // 在特征点管理器中，新创建一个特征点id，这里的frame_count就是该特征点在滑窗中的当前位置，作为这个特征点的起始位置
-            feature.push_back(FeaturePerId(feature_id, frame_count));
-            feature.back().feature_per_frame.push_back(f_per_fra);
+            feature.push_back(FeaturePerId(feature_id, frame_count)); // 调用构造函数创建新的id
+            feature.back().feature_per_frame.push_back(f_per_fra); // 把当前帧的特征点信息加入到这个id下对应的帧属性中
         }
         // 如果这是一个已有的特征点，就在对应的“组织”下增加一个帧属性
         else if (it->feature_id == feature_id)
@@ -89,18 +89,20 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
             last_track_num++;   // 追踪到上一帧的特征点数目
         }
     }
-    // 前两帧都设置为KF，追踪过少也认为是KF
+    // 前两帧都设置为KF，追踪过少也认为是KF，也就是说第0帧和第1帧都是KF；如果特征点追踪到的数量小于20，说明特征关联比较弱，也认为是KF
     if (frame_count < 2 || last_track_num < 20)
         return true;
 
+    // 如果都不满足上面的条件，就计算上一帧的视差，也就是倒数第二帧和倒数第三帧之间的视差
     for (auto &it_per_id : feature)
     {
-        // 计算的实际上是frame_count-1,也就是前一帧是否为关键帧
+        // 计算的实际上是frame_count-1,也就是前一帧倒数第二帧是否为关键帧
         // 因此起始帧至少得是frame_count - 2,同时至少覆盖到frame_count - 1帧
+        // 意思就是说如果特征点至少在倒数第三帧有追踪到同时检查多少帧可以看到这个特征点，同时能否确定覆盖到倒数第二帧（覆盖连续帧）
         if (it_per_id.start_frame <= frame_count - 2 &&
             it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1)
         {
-            parallax_sum += compensatedParallax2(it_per_id, frame_count);
+            parallax_sum += compensatedParallax2(it_per_id, frame_count); // 计算视差
             parallax_num++;
         }
     }
@@ -113,7 +115,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     {
         ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);
         ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
-        // 看看平均视差是否超过一个阈值
+        // 看看平均视差是否超过一个阈值，从而确定是否是关键帧
         return parallax_sum / parallax_num >= MIN_PARALLAX;
     }
 }
@@ -430,8 +432,8 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
     //check the second last frame is keyframe or not
     //parallax betwwen seconde last frame and third last frame
     // 找到相邻两帧
-    const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[frame_count - 2 - it_per_id.start_frame];
-    const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[frame_count - 1 - it_per_id.start_frame];
+    const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[frame_count - 2 - it_per_id.start_frame]; // 减去vector起始帧倒数第三帧
+    const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[frame_count - 1 - it_per_id.start_frame]; // 倒数第二帧
 
     double ans = 0;
     Vector3d p_j = frame_j.point;
@@ -449,13 +451,14 @@ double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int f
     double dep_i = p_i(2);
     double u_i = p_i(0) / dep_i;
     double v_i = p_i(1) / dep_i;
-    double du = u_i - u_j, dv = v_i - v_j;  // 归一化相机坐标系的坐标差
+    double du = u_i - u_j, dv = v_i - v_j;  // 归一化相机坐标系的坐标差，du是x方向的差，dv是y方向的差
     // 当都是归一化坐标系时，他们两个都是一样的
     double dep_i_comp = p_i_comp(2);
     double u_i_comp = p_i_comp(0) / dep_i_comp;
     double v_i_comp = p_i_comp(1) / dep_i_comp;
     double du_comp = u_i_comp - u_j, dv_comp = v_i_comp - v_j;
-
+    
+    // 保证结果大于0
     ans = max(ans, sqrt(min(du * du + dv * dv, du_comp * du_comp + dv_comp * dv_comp)));
 
     return ans;

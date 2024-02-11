@@ -138,17 +138,22 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     acc_0 = linear_acceleration;
     gyr_0 = angular_velocity;
 }
-
+/**
+ * @brief 对图像数据进行处理，包括特征点管理，外参标定，VIO初始化，非线性优化，滑窗，移除无效地图点
+ * 
+ * @param[in] image // 和id绑定的图像数据
+ * @param[in] header // 当前帧的表头，主要用来获取时间戳
+ */
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header)
 {
     ROS_DEBUG("new image coming ------------------------------------------");
     ROS_DEBUG("Adding feature points %lu", image.size());
     // Step 1 将特征点信息加到f_manager这个特征点管理器中，同时进行是否关键帧的检查
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
-        // 如果上一帧是关键帧，则滑窗中最老的帧就要被移出滑窗
+        // 如果上一帧是关键帧目前滑窗的倒数第二帧是关键帧，，则滑窗中最老的帧就要被移出滑窗，
         marginalization_flag = MARGIN_OLD;
     else
-        // 否则移除上一帧
+        // 如果上一帧不是关键帧，那么直接移除上一帧
         marginalization_flag = MARGIN_SECOND_NEW;
 
     ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
@@ -157,18 +162,20 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
     Headers[frame_count] = header;
 
-    // ! all_image_frame用来做初始化相关操作，他保留滑窗起始到当前的所有帧
+    // ! ImageFrame变量和all_image_frame专门用来做初始化相关操作，他保留滑窗起始到当前的所有帧
     // 有一些帧会因为不是KF，被MARGIN_SECOND_NEW，但是及时较新的帧被margin，他也会保留在这个容器中，因为初始化要求使用所有的帧，而非只要KF
+    // ! 因此下面的操作就是将图像帧（无论是不是关键帧）以及其对应的预积分量都要保存下来为了初始化用，初始化保证足够的数据来确保初始化得到的值足够精确；
+    // ! 当然这只是为了初始化，滑窗优化不需要非关键帧，关键帧要保证足够的共视点之外，同时还要保证足够的视差
     ImageFrame imageframe(image, header.stamp.toSec());
     imageframe.pre_integration = tmp_pre_integration;
     // 这里就是简单的把图像和预积分绑定在一起，这里预积分就是两帧之间的，滑窗中实际上是两个KF之间的
     // 实际上是准备用来初始化的相关数据
-    all_image_frame.insert(make_pair(header.stamp.toSec(), imageframe));
-    tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
+    all_image_frame.insert(make_pair(header.stamp.toSec(), imageframe)); // 将初始化用的图像数据保存下来
+    tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]}; // 为下一帧初始化临时预积分量
 
     // 没有外参初值
     // Step 2： 外参初始化
-    if(ESTIMATE_EXTRINSIC == 2)
+    if(ESTIMATE_EXTRINSIC == 2) // 外参是2，说明没有任何外参初值；外参是1，说明有外参初值但需要优化；外参是0，说明有可信的外参初值
     {
         ROS_INFO("calibrating extrinsic param, rotation movement is needed");
         if (frame_count != 0)
