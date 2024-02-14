@@ -196,12 +196,12 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         }
     }
 
-    if (solver_flag == INITIAL)
+    if (solver_flag == INITIAL) // 外参初始化标志为0，需要初始化
     {
         if (frame_count == WINDOW_SIZE) // 有足够的帧数
         {
             bool result = false;
-            // 要有可信的外参值，同时距离上次初始化不成功至少相邻0.1s
+            // 要有可信的外参值，同时距离上次初始化不成功至少相邻0.1s；意思就是说初始化不是一次就成功的，需要多次尝试
             // Step 3： VIO初始化
             if( ESTIMATE_EXTRINSIC != 2 && (header.stamp.toSec() - initial_timestamp) > 0.1)
             {
@@ -274,7 +274,7 @@ bool Estimator::initialStructure()
 {
     TicToc t_sfm;
     // Step 1 check imu observibility
-    // 希望得到足够的激励
+    // 通过求取希望得到足够的激励
     {
         map<double, ImageFrame>::iterator frame_it;
         Vector3d sum_g;
@@ -308,24 +308,24 @@ bool Estimator::initialStructure()
         }
     }
 
-    // Step 2 global sfm
+    // Step 2 global sfm，全局运送结构恢复（sfm），就是一个纯slam，方便后续做三维重建
     // 做一个纯视觉slam
     Quaterniond Q[frame_count + 1];
     Vector3d T[frame_count + 1];
     map<int, Vector3d> sfm_tracked_points;
-    vector<SFMFeature> sfm_f;   // 保存每个特征点的信息
-    // 遍历所有的特征点
+    vector<SFMFeature> sfm_f;   // 保存每个特征点的将要经过三角化后的信息，主要是深度信息
+    // 遍历所有的特征点，将数据保存到sfm_f中
     for (auto &it_per_id : f_manager.feature)
     {
         int imu_j = it_per_id.start_frame - 1;  // 这个跟imu无关，就是存储观测特征点的帧的索引
-        SFMFeature tmp_feature; // 用来后续做sfm
-        tmp_feature.state = false;
+        SFMFeature tmp_feature; // 每一个结构体用来后续做sfm，用于做维护
+        tmp_feature.state = false; // 当前特征点的状态，未经过优化
         tmp_feature.id = it_per_id.feature_id;
-        for (auto &it_per_frame : it_per_id.feature_per_frame)
+        for (auto &it_per_frame : it_per_id.feature_per_frame) // 遍历这个特征点在每一帧的信息和性质
         {
             imu_j++;
-            Vector3d pts_j = it_per_frame.point;
-            // 索引以及各自坐标系下的坐标
+            Vector3d pts_j = it_per_frame.point; // 特征点在当前帧归一化相机坐标系下的坐标，也是前端去畸变的结果
+            // 特征点在当前帧的索引以及各自相机坐标系下的坐标
             tmp_feature.observation.push_back(make_pair(imu_j, Eigen::Vector2d{pts_j.x(), pts_j.y()}));
         }
         sfm_f.push_back(tmp_feature);
@@ -334,14 +334,15 @@ bool Estimator::initialStructure()
     Matrix3d relative_R;  // 枢纽帧与关联帧的变换
     Vector3d relative_T;
     int l;  // 枢纽帧索引
-    if (!relativePose(relative_R, relative_T, l))
+    if (!relativePose(relative_R, relative_T, l)) // 寻找枢纽帧，然后求解枢纽帧与最后一帧的变换矩阵R，t
     {
         ROS_INFO("Not enough features or parallax; Move device around");
         return false;
     }
     
     GlobalSFM sfm;
-    // 进行sfm的求解
+    // 前面得到枢纽帧以及其和最后一帧的相对位姿关系后，进行sfm的求解，
+    // 这里由于用到了特征点，因此求解的3d点都是关键帧的特征点
     if(!sfm.construct(frame_count + 1, Q, T, l,
               relative_R, relative_T,
               sfm_f, sfm_tracked_points))
@@ -352,7 +353,7 @@ bool Estimator::initialStructure()
     }
 
     // Step 3 solve pnp for all frame
-    // ! 只是针对KF进行sfm，初始化需要all_image_frame中的所有元素，因此下面通过KF来求解其他的非KF的位姿
+    // ! 由于前面只是针对KF进行sfm，初始化需要all_image_frame中的所有元素，因此下面通过KF来求解其他的非KF的位姿
     map<double, ImageFrame>::iterator frame_it;
     map<int, Vector3d>::iterator it;
     frame_it = all_image_frame.begin( );
@@ -361,19 +362,21 @@ bool Estimator::initialStructure()
     {
         // provide initial guess
         cv::Mat r, rvec, t, D, tmp_r;
-        // 这一帧本身就是KF，因此可以直接得到位姿
+        // 这一帧本身就是KF，因此可以直接得到位姿，Headers就是当前滑窗里面的关键帧表头
         if((frame_it->first) == Headers[i].stamp.toSec())
         {
             frame_it->second.is_key_frame = true;
             frame_it->second.R = Q[i].toRotationMatrix() * RIC[0].transpose();  // 得到Rwi
-            frame_it->second.T = T[i];  // 初始化不估计平移外参
+            frame_it->second.T = T[i];  // 初始化不估计平移外参，也就是带尺度的平移
             i++;
             continue;
         }
+        // 如果当前帧时间戳大于关键帧的时间戳，那么就找下一个关键帧
         if((frame_it->first) > Headers[i].stamp.toSec())
         {
             i++;
         }
+        // 下面就是PnP求解得到当前帧的位姿
         // 最近的KF提供一个初始值，Twc -> Tcw
         Matrix3d R_inital = (Q[i].inverse()).toRotationMatrix();
         Vector3d P_inital = - R_inital * T[i];
@@ -431,7 +434,8 @@ bool Estimator::initialStructure()
         frame_it->second.T = T_pnp;
     }
     
-    // 到此就求解出用来做视觉惯性对齐的所有视觉帧的位姿
+    // 到此就求解出用来做视觉惯性对齐的所有视觉帧的位姿，因为IMU预积分部分已经把当前滑窗的imu数据都处理完了
+    // 所以第四步骤就是视觉惯性的对齐，恢复尺度
     // Step 4 视觉惯性对齐，恢复尺度
     if (visualInitialAlign())
         return true;
@@ -543,10 +547,10 @@ bool Estimator::visualInitialAlign()
 bool Estimator::relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l)
 {
     // find previous frame which contians enough correspondance and parallex with newest frame
-    // 优先从最前面开始
+    // 优先从最前面开始检查是否符合条件，因为最前面的帧和最后一帧的视差最大
     for (int i = 0; i < WINDOW_SIZE; i++)
     {
-        vector<pair<Vector3d, Vector3d>> corres;
+        vector<pair<Vector3d, Vector3d>> corres; // 保存共视特征点，三维坐标是每个特征点在第i帧和最后一帧的相机归一化坐标
         corres = f_manager.getCorresponding(i, WINDOW_SIZE);   // ! 第i帧和最后一帧的关联特征
         // 要求共视的特征点足够多
         if (corres.size() > 20)

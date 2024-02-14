@@ -21,7 +21,7 @@ struct SFMFeature
     double depth;
 };
 
-// ceres 的重投影误差
+// ceres 的重投影误差，ceres的规定，必须重载一个类和（）运算符，然后在这个类里面写重投影误差的计算
 struct ReprojectionError3D
 {
 	ReprojectionError3D(double observed_u, double observed_v)
@@ -37,17 +37,17 @@ struct ReprojectionError3D
 		// 得到该相机坐标系下的3d坐标
 		T xp = p[0] / p[2];
     	T yp = p[1] / p[2];	// 归一化处理
-			// 跟现有观测形成残差
+		// 跟现有观测形成残差
     	residuals[0] = xp - T(observed_u);
     	residuals[1] = yp - T(observed_v);
     	return true;
 	}
-
+	// 重载一个静态函数，用于生成costfunction，这样才可以在ceres中使用
 	static ceres::CostFunction* Create(const double observed_x,
 	                                   const double observed_y) 
 	{
-	  return (new ceres::AutoDiffCostFunction<
-	          ReprojectionError3D, 2, 4, 3, 3>(
+	  return (new ceres::AutoDiffCostFunction< // 基类指针，其括号内是末班的实例化，也叫模版的参数列表。
+	          ReprojectionError3D, 2, 4, 3, 3>( // 派生类，2是残差的维度，4是相机的位姿维度，3是3d点的维度
 	          	new ReprojectionError3D(observed_x,observed_y)));
 	}
 
