@@ -225,7 +225,7 @@ void FeatureManager::clearDepth(const VectorXd &x)
 }
 
 /**
- * @brief 得到特征点的逆深度
+ * @brief 得到特征点的逆深度，实际上这个函数不在乎逆深度是多少，只是为了得到特征点的数量
  * 
  * @return VectorXd 
  */
@@ -237,6 +237,7 @@ VectorXd FeatureManager::getDepthVector()
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
+        // 这个if表示这个特征点至少被两帧看到，同时起始帧至少是倒数第三帧，也就是说至少有三帧看到，表示特征点有用
             continue;
 #if 1
         dep_vec(++feature_index) = 1. / it_per_id.estimated_depth;
@@ -248,11 +249,11 @@ VectorXd FeatureManager::getDepthVector()
 }
 
 /**
- * @brief 利用观测到该特征点的 --所有位姿-- 来三角化特征点
+ * @brief 利用观测到该特征点的 --所有位姿-- 来三角化特征点，求取的主要是特征点队列中第一个观测到该特征点的KF的深度
  * 
- * @param[in] Ps 
- * @param[in] tic 
- * @param[in] ric 
+ * @param[in] Ps 带有尺度的相机坐标系位姿
+ * @param[in] tic 零向量的平移外参
+ * @param[in] ric 已知的旋转外参
  */
 void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
 {
@@ -260,11 +261,14 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
     for (auto &it_per_id : feature)
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
+        // 保证点的有效性，至少被两帧看到，同时起始帧至少是倒数第三帧
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
 
         if (it_per_id.estimated_depth > 0)  // 代表已经三角化过了
             continue;
+        
+        // imu_i是第一个观察到这个特征点的KF的id
         int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
 
         ROS_ASSERT(NUM_OF_CAM == 1);
@@ -284,11 +288,11 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
             // 得到该KF的相机坐标系位姿
             Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
             Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
-            // T_w_cj -> T_c0_cj
+            // T_w_cj -> T_c0_cj，这个直接用矩阵变换。
             Eigen::Vector3d t = R0.transpose() * (t1 - t0);
             Eigen::Matrix3d R = R0.transpose() * R1;
             Eigen::Matrix<double, 3, 4> P;
-            // T_c0_cj -> T_cj_c0相当于把c0当作世界系
+            // T_c0_cj -> T_cj_c0相当于把c0当作世界系，这个是做增广矩阵的转置
             P.leftCols<3>() = R.transpose();
             P.rightCols<1>() = -R.transpose() * t;
             Eigen::Vector3d f = it_per_frame.point.normalized();

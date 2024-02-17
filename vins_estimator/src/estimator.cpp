@@ -447,12 +447,14 @@ bool Estimator::initialStructure()
 
 }
 
+// 视觉惯性对齐，通过IMU预积分量对齐视觉的尺度，
+// 同时利用重力方向修正或者叫做对齐滑窗设定的参考系（世界坐标系）到整个slam系统规定的世界参考系
 bool Estimator::visualInitialAlign()
 {
     TicToc t_g;
     VectorXd x;
     //solve scale
-    bool result = VisualIMUAlignment(all_image_frame, Bgs, g, x);
+    bool result = VisualIMUAlignment(all_image_frame, Bgs, g, x); // 通过imu预积分量对齐视觉的尺度和关键帧的状态（速度）以及重力方向
     if(!result)
     {
         ROS_DEBUG("solve g failed!");
@@ -473,7 +475,7 @@ bool Estimator::visualInitialAlign()
     VectorXd dep = f_manager.getDepthVector();  // 根据有效特征点数初始化这个动态向量
     for (int i = 0; i < dep.size(); i++)
         dep[i] = -1;    // 深度预设都是-1
-    f_manager.clearDepth(dep);  // 特征管理器把所有的特征点逆深度也设置为-1
+    f_manager.clearDepth(dep);  // 特征管理器把所有的特征点逆深度也设置为-1，这一步意义不大
 
     //triangulat on cam pose , no tic
     Vector3d TIC_TMP[NUM_OF_CAM];
@@ -491,12 +493,13 @@ bool Estimator::visualInitialAlign()
         pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
     }
     // 下面开始把所有的状态对齐到第0帧的imu坐标系
+
     for (int i = frame_count; i >= 0; i--)
-        // twi - tw0 = toi,就是把所有的平移对齐到滑窗中的第0帧
+        // twi - tw0 = toi,就是把所有的平移对齐到滑窗中的第0帧，但是目前这个平移是在枢纽帧下的
         Ps[i] = s * Ps[i] - Rs[i] * TIC[0] - (s * Ps[0] - Rs[0] * TIC[0]);
     int kv = -1;
     map<double, ImageFrame>::iterator frame_i;
-    // 把求解出来KF的速度赋给滑窗中
+    // 把求解出来KF的速度赋给滑窗中，这个仍然在枢纽帧坐标系下
     for (frame_i = all_image_frame.begin(); frame_i != all_image_frame.end(); frame_i++)
     {
         if(frame_i->second.is_key_frame)
@@ -506,7 +509,7 @@ bool Estimator::visualInitialAlign()
             Vs[kv] = frame_i->second.R * x.segment<3>(kv * 3);
         }
     }
-    // 把尺度模糊的3d点恢复到真实尺度下
+    // 把尺度模糊的3d点恢复到真实尺度下，也就是在相机坐标系下
     for (auto &it_per_id : f_manager.feature)
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
